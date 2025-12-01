@@ -1,0 +1,12 @@
+name: pm_back_dev
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: docker/dockerfile.dev # Ligamos el dockerfile personalizado para dev
+    ports:
+      - "3015:3015" # Mapea el puerto del contenedor al de tu máquina
+    volumes:
+      - ../:/app # Mapea el código fuente para obtener los archivos fuente y reflejar cambios en tiempo real
+    env_file:
+      - ../.env.development # Archivo con las variables de entorno

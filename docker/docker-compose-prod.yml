@@ -1,0 +1,11 @@
+name: sgi_service
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: docker/dockerfile.prod # Ligamos el dockerfile personalizado para dev
+    ports:
+      - "3001:3001" # Mapea el puerto del contenedor al de tu máquina
+    env_file:
+      - ../.env.production # Archivo con las variables de entorno
+    restart: always

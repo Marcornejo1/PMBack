@@ -1,0 +1,37 @@
+#Usamos la imagen de nodejs como base
+FROM node:20-alpine AS builder
+
+#Creamos y seleccionamos el directorio donde trabajaremos
+WORKDIR /app
+
+#Copiamos los archivos de paquetes
+COPY package.json yarn.lock ./
+
+#Instalamos los paquetes necesarios para la compilación
+RUN yarn install --production=false
+
+#Copiamos el resto de archivos
+COPY . .
+
+#Creamos la carpeta de build
+RUN yarn build
+
+
+#Etapa 2: Producción
+#Ya creado el contenedor anterior lo copiamos al siguiente para las configuraciones finales
+#Utilizamos la misma imagen
+FROM node:20-alpine
+
+#Creamos y seleccionamos el directorio donde trabajaremos
+WORKDIR /app
+
+#Copiamos solo los archivos necesarios para produccción (compilado y variables de entorno de producción)
+COPY --from=builder /app/package.json ./
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+
+#Exponemos el puerto donde va a correr la aplicación
+EXPOSE 3001
+
+#Iniciamos el proyecto
+CMD ["yarn", "start"]

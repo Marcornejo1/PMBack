@@ -1,0 +1,11 @@
+#Usamos la imagen de nodejs como base
+FROM node:20
+
+#Creamos y seleccionamos el directorio donde trabajaremos
+WORKDIR /app
+ 
+#Exponemos el puerto donde va a correr la aplicación
+EXPOSE 3015
+
+#Iniciamos la aplicación
+CMD ["yarn", "dev"]
