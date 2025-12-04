@@ -1,5 +1,7 @@
 import express from "express";
 import cors from "cors";
+import authRouter from "./routes/auth.routes";
+import validateSession from "./middleware/auth.middleware";
 
 //Configuraciones generales para la aplicación express
 const app= express();
