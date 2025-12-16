@@ -1,4 +1,4 @@
-name: sgi_service
+name: PM_service
 services:
   app:
     build:
