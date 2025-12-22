@@ -11,20 +11,20 @@ const reportesController: controllerProps = {
       //Query para obtener estadísticas del dashboard
       const query = `
         SELECT
-          COUNT(*) as totalReportes,
-          SUM(CASE WHEN estado = 'Completado' THEN 1 ELSE 0 END) as reportesCompletados,
-          SUM(CASE WHEN estado = 'Pendiente' THEN 1 ELSE 0 END) as reportesPendientes,
-          SUM(CASE WHEN YEAR(fechaCreacion) = YEAR(GETDATE()) AND MONTH(fechaCreacion) = MONTH(GETDATE()) THEN 1 ELSE 0 END) as reportesMesActual
+          ISNULL(COUNT(*), 0) as totalReportes,
+          ISNULL(SUM(CASE WHEN estado = 'Completado' THEN 1 ELSE 0 END), 0) as reportesCompletados,
+          ISNULL(SUM(CASE WHEN estado = 'Pendiente' THEN 1 ELSE 0 END), 0) as reportesPendientes,
+          ISNULL(SUM(CASE WHEN YEAR(fechaCreacion) = YEAR(GETDATE()) AND MONTH(fechaCreacion) = MONTH(GETDATE()) THEN 1 ELSE 0 END), 0) as reportesMesActual
         FROM reportes
       `;
       //Conectamos a la base de datos
       const pool = await connectDB();
       const result = await pool.request().query(query);
 
-      console.log(result);
+      console.log(result.recordset[0]);
       
       //Enviamos la respuesta
-      res.send(result);
+      res.send(result.recordset[0]);
 
     } catch (error: any) {
       console.error("Error al obtener estadísticas del dashboard:", error);
@@ -43,13 +43,13 @@ const reportesController: controllerProps = {
 
       const query = `
         SELECT TOP 5
-          CAST(idReporte AS NVARCHAR(36)) as id,
-          cliente,
-          CONVERT(VARCHAR(10), fechaCreacion, 103) as fecha,
-          tipo,
-          estado
+          CAST(ISNULL(idReporte, '00000000-0000-0000-0000-000000000000') AS NVARCHAR(36)) as id,
+          ISNULL(cliente, '') as cliente,
+          CONVERT(VARCHAR(10), ISNULL(fechaCreacion, GETDATE()), 103) as fecha,
+          ISNULL(tipo, '') as tipo,
+          ISNULL(estado, '') as estado
         FROM reportes
-        ORDER BY fechaCreacion DESC
+        ORDER BY ISNULL(fechaCreacion, GETDATE()) DESC
       `;
 
       const result = await pool.request().query(query);
@@ -68,13 +68,13 @@ const reportesController: controllerProps = {
 
       const query = `
         SELECT
-          CAST(idReporte AS NVARCHAR(36)) as id,
-          cliente,
-          CONVERT(VARCHAR(19), fechaCreacion, 120) as fechaGuardado,
-          0 as porcentajeCompletado  -- Campo calculado, implementar lógica según necesidad
+          CAST(ISNULL(idReporte, '00000000-0000-0000-0000-000000000000') AS NVARCHAR(36)) as id,
+          ISNULL(cliente, '') as cliente,
+          CONVERT(VARCHAR(19), ISNULL(fechaCreacion, GETDATE()), 120) as fechaGuardado,
+          ISNULL(0, 0) as porcentajeCompletado
         FROM reportes
-        WHERE estado = 'Borrador'
-        ORDER BY fechaCreacion DESC
+        WHERE ISNULL(estado, '') = 'Borrador'
+        ORDER BY ISNULL(fechaCreacion, GETDATE()) DESC
       `;
 
       const result = await pool.request().query(query);
