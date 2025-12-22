@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import authRouter from "./routes/auth.routes";
 import validateSession from "./middleware/auth.middleware";
+import reportesRouter from "./routes/reportes.routes";
 
 //Configuraciones generales para la aplicación express
 const app= express();
@@ -22,6 +23,7 @@ app.get('/api', (_, res) => {
 
 //Rutas de la api
 app.use("/api/auth", authRouter);
+app.use("/api/reportes", validateSession, reportesRouter);
 
 
 const host = process.env.BACKEND_HOST || "http://localhost";
