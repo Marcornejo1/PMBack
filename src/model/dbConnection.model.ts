@@ -6,6 +6,7 @@ const { DB_USER, DB_PASS, DB_NAME } = process.env;
 //Creamos configuraciones de sql
 const config: sql.config = {
   server: DB_HOST,
+  port: parseInt(process.env.DB_PORT || '1466'),
 //Analizar donde colocar las credenciales
   user: DB_USER,
   password: DB_PASS,
