@@ -5,6 +5,7 @@ const reportesRouter: any = express.Router();
 
 //Definimos Rutas de la api
 reportesRouter.get("/readDash", reportesController.readDash);
+reportesRouter.get("/findMatch", reportesController.findMatch);
 
 /*
 // RUTAS COMENTADAS PARA REPORTES RECIENTES Y BORRADORES

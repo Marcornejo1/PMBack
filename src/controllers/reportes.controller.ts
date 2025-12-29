@@ -1,6 +1,7 @@
 import controllerProps from "./interfaces";
 import connectDB from "../model/dbConnection.model";
 import { NVarChar, Date, UniqueIdentifier } from "mssql";
+import { MAYUS_REG_EX } from "../const/regex";
 
 const numeroCoincidencias = 3;
 
@@ -22,7 +23,7 @@ const reportesController: controllerProps = {
       const result = await pool.request().query(query);
 
       console.log(result.recordset[0]);
-      
+
       //Enviamos la respuesta
       res.send(result.recordset[0]);
 
@@ -31,6 +32,61 @@ const reportesController: controllerProps = {
       res.status(500).send({ type: "fatal", message: "Error al obtener estadísticas del dashboard" });
     }
   },
+
+  //Encontrar coincidencias por número de serie
+  findMatch: async (req, res) => {
+    //obtenemos parametros de busqueda
+    const { numeroSerie } = req.query;
+
+    //Validamos datos y el tipo de dato
+    if (!numeroSerie)
+      return res.status(400).send({ type: "warning", message: "Faltan datos por completar" });
+
+    if (typeof numeroSerie !== "string")
+      return res.status(400).send({ type: "warning", message: "Dato ingresado no válido" });
+
+    //Validamos que la cadena no esté vacía y que no sea solo espacios
+    if (numeroSerie.trim().length < 1)
+      return res.status(400).send({ type: "warning", message: "Faltan datos por completar" });
+
+    //Validamos que cumplan las expresiones regulares
+    if (!MAYUS_REG_EX.test(numeroSerie))
+      return res.status(400).send({ type: "warning", message: "Datos ingresados no válidos" });
+
+    //Verificamos si ya esta registrado el número de serie
+    try {
+      //Creamos el query
+      const queryBusquedaIndividual = `
+        SELECT COUNT(1) AS count
+        FROM equipos
+        WHERE nSerie = @numeroSerie`;
+
+      //Se realiza la conexión
+      const pool = await connectDB();
+
+      //Se envia el query y escapamos los datos para evitar inyecciones SQL
+      //Se limpian las entradas para evitar espacios al inicio y final
+      const resultBusquedaIndividual = await pool.request().input("numeroSerie", NVarChar, numeroSerie.trim()).query(queryBusquedaIndividual);
+      //Validamos si el resultado se encuentra
+      const count = resultBusquedaIndividual.recordset[0].count;
+
+      //Si se encuentra un registro igual se acaba el proceso y enviamos un mensaje de aviso
+      if (count > 0)
+        return res.status(202).send({ type: "warning", message: "Registro duplicado" });
+
+      return res.send("No se encontraron coincidencias");
+    } catch (error){
+      console.error("Error al buscar coincidencias", error);
+      res.status(500).send({ type: "fatal", message: "Error al buscar coincidencias" });
+    }
+
+  },
+
+  create: async (req, res) => {
+    //Obtenemos los parametros con body, que da el cuerpo de la solicitud http
+    const { /* Parametros */ } = req.body;
+
+  }
 
   /*
   // CONSULTAS COMENTADAS PARA REPORTES RECIENTES Y BORRADORES
