@@ -8,6 +8,9 @@ import reportesRouter from "./routes/reportes.routes";
 const app= express();
 app.use(express.json());
 
+// Servir archivos estáticos desde la carpeta uploads
+app.use('/uploads', express.static('uploads'));
+
 //Configuramos cors para el envío y uso de cookies al frontend
 const FRONTEND_HOST = process.env.FRONTEND_HOST || "http://localhost";
 const FRONTEND_PORT = process.env.FRONTEND_PORT || "5151";

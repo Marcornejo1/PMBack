@@ -1,11 +1,26 @@
 import express from "express";
 import reportesController from "../controllers/reportes.controller";
+import multer from "multer";
 
 const reportesRouter: any = express.Router();
+
+// Configurar multer para subir imágenes
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, 'uploads/'); // Carpeta donde se guardarán las imágenes
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, file.fieldname + '-' + uniqueSuffix + '.' + file.mimetype.split('/')[1]);
+  }
+});
+
+const upload = multer({ storage: storage });
 
 //Definimos Rutas de la api
 reportesRouter.get("/readDash", reportesController.readDash);
 reportesRouter.get("/findMatch", reportesController.findMatch);
+reportesRouter.post("/", upload.array('referenciaImages', 10), reportesController.create);
 
 /*
 // RUTAS COMENTADAS PARA REPORTES RECIENTES Y BORRADORES

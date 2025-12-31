@@ -10,13 +10,15 @@
   "license": "MIT",
   "dependencies": {
     "@types/mssql": "^9.1.8",
+    "@types/multer": "^2.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
     "fast-levenshtein": "^3.0.0",
     "jsonwebtoken": "9.0.2",
     "ldapts": "^8.0.0",
-    "mssql": "^12.1.1"
+    "mssql": "^12.1.1",
+    "multer": "^2.0.2"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
