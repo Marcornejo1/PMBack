@@ -18,6 +18,7 @@ const storage = multer.diskStorage({
 const upload = multer({ storage: storage });
 
 //Definimos Rutas de la api
+reportesRouter.get("/", reportesController.read);
 reportesRouter.get("/readDash", reportesController.readDash);
 reportesRouter.get("/findMatch", reportesController.findMatch);
 reportesRouter.post("/", upload.array('referenciaImages', 10), reportesController.create);
