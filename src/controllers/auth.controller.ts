@@ -19,7 +19,7 @@ const authController: controllerProps = {
     //Configuramos el cliente LDAP
     try {
       const AD_HOST = process.env.AD_HOST || "localhost";
-      const AD_DOMAIN = process.env.AD_DOMAIN;
+      const AD_DOMAIN = process.env.AD_DOMAIN ||"example.com";
       const userWithDomain = username + "@" + AD_DOMAIN;
 
       //Conectamos con el servidor AD
@@ -27,22 +27,103 @@ const authController: controllerProps = {
         url: `ldap://${AD_HOST}`,
         connectTimeout: 3000,
         timeout: 10000,
-        strictDN: true,
+        strictDN: false,
       });
 
-      //Mandamos credenciales del cliente
-      await client.bind(userWithDomain, password);
+      // Intentamos bind con UPN (user@domain)
+      try {
+        await client.bind(userWithDomain, password);
 
-      //Si la autenticación es exitosa, creamos los tokens
-      const authToken = createAuthToken(username);
-      const refreshToken = createRefreshToken(username);
+        //Si la autenticación es exitosa, creamos los tokens
+        const authToken = createAuthToken(username);
+        const refreshToken = createRefreshToken(username);
 
-      //Devolvemos en la respuesta el nombre de usuario y los tokens
-      return res.send({
-        username,
-        RCURT: refreshToken,
-        RCUAT: authToken,
-      });
+        await client.unbind();
+        //Devolvemos en la respuesta el nombre de usuario y los tokens
+        return res.send({
+          username,
+          RCURT: refreshToken,
+          RCUAT: authToken,
+        });
+      } catch (bindError: any) {
+        console.error("Bind con UPN falló:", bindError);
+        // Si hay un error de sintaxis DN (invalid DN), intentamos buscar el DN y bindear con él
+        if (bindError && bindError.code === 34) {
+          try {
+            const LDAP_ADMIN_PASSWORD = process.env.LDAP_ADMIN_PASSWORD || "adminpassword";
+            const domainBase = AD_DOMAIN.split('.').map(p => `dc=${p}`).join(',');
+            const adminDN = process.env.LDAP_ADMIN_DN || `cn=admin,${domainBase}`;
+
+            // Bind como admin para realizar la búsqueda
+            await client.bind(adminDN, LDAP_ADMIN_PASSWORD);
+
+            // Preparar candidatos para base de búsqueda: AD_SEARCH_BASE (si está) y la base derivada de AD_DOMAIN
+            const configuredBase = (process.env.AD_SEARCH_BASE || '').trim();
+            const derivedBase = domainBase;
+            const searchBases = [] as string[];
+            if (configuredBase) searchBases.push(configuredBase);
+            if (!searchBases.includes(derivedBase)) searchBases.push(derivedBase);
+
+            // Usamos filtro OR para buscar por cn, uid o mail
+            const searchFilter = `(|(cn=${username})(uid=${username})(mail=${username}))`;
+
+            let foundEntry: any = null;
+            for (const base of searchBases) {
+              try {
+                const { searchEntries } = await client.search(base, {
+                  scope: 'sub',
+                  filter: searchFilter,
+                  attributes: ['dn'],
+                });
+
+                if (searchEntries && searchEntries.length > 0) {
+                  foundEntry = searchEntries[0];
+                  break;
+                }
+              } catch (err: any) {
+                // Si la base no existe (NoSuchObject), probamos la siguiente. Si es otro error, lo lanzamos.
+                if (err && err.code === 32) {
+                  console.warn(`Base ${base} no existe, probando siguiente...`);
+                  continue;
+                }
+                throw err;
+              }
+            }
+
+            if (foundEntry) {
+              const userDN = foundEntry.dn as string;
+              try {
+                // Intentamos bind con el DN del usuario
+                await client.bind(userDN, password);
+
+                const authToken = createAuthToken(username);
+                const refreshToken = createRefreshToken(username);
+
+                await client.unbind();
+                return res.send({ username, RCURT: refreshToken, RCUAT: authToken });
+              } catch (userBindError: any) {
+                console.error("Error al autenticar con DN del usuario:", userBindError);
+                await client.unbind();
+                return res.status(401).send({ type: "fatal", message: "Credenciales inválidas" });
+              }
+            } else {
+              await client.unbind();
+              return res.status(400).send({ type: "fatal", message: "Usuario no encontrado" });
+            }
+          } catch (searchError: any) {
+            console.error("Error buscando DN o bind como admin:", searchError);
+            try { await client.unbind(); } catch (e) {}
+            return res.status(500).send({ type: "fatal", message: "Error al iniciar sesión" });
+          }
+        }
+
+        // Otros errores de bind
+        try { await client.unbind(); } catch (e) {}
+        if (bindError && bindError.code === 49)
+          return res.status(401).send({ type: "fatal", message: "Credenciales inválidas" });
+
+        return res.status(500).send({ type: "fatal", message: "Error al iniciar sesión" });
+      }
     } catch (error: any) {
       console.error("Error al iniciar sesión:", error);
       return res.status(500).send({ type: "fatal", message: "Error al iniciar sesión" });
