@@ -2,6 +2,7 @@ import controllerProps from "./interfaces";
 import connectDB from "../model/dbConnection.model";
 import { Bit, Request, NVarChar, Date, UniqueIdentifier, Transaction, Int, Decimal } from "mssql";
 import { MAYUS_REG_EX } from "../const/regex";
+import { formatDate } from "../functions/formatDate";
 
 const numeroCoincidencias = 3;
 
@@ -28,7 +29,13 @@ const reportesController: controllerProps = {
       const pool = await connectDB();
       const result = await pool.request().query(query);
 
-      return res.send(result.recordset);
+      const resFormato = result.recordset.map(record =>({
+        ...record,
+        fechaCreacion: formatDate(record.fechaCreacion),
+        fechaModificacion: formatDate(record.fechaModificacion)
+      }));
+
+      return res.send(resFormato);
 
     } catch(error: any){
       console.error("Error al obtener los reportes:", error);
@@ -170,8 +177,9 @@ const reportesController: controllerProps = {
   create: async (req, res) => {
     //Obtenemos los parametros con body, que da el cuerpo de la solicitud http
     const { data, estado, usuarioCreador } = req.body;
-    const { cliente, direccion, ciudad, encargado, marca, modelo, nSerie, referenciaImages, tipo, EnFFAB, EnFFBC, EnFFCA, EnFNAN, EnFNBN, ENFNCN, CorrA, CorrB, CorrC, SalFFAB, SalFFBC, SalFFCA, SalFNAN, SalFNBN, SalFNCN, CorrSalidaA, CorrSalidaB, CorrSalidaC, FrecEntr, FrecSalid, PorCarga, TenBateria, CorrBateria, TempUPS, ModeloBateria, CantBaterias, AñoFabricacionBaterias, Observaciones, nombreRealizo, nombreRecibio, fechaRealizado, fechaRecibido } = data;
-    console.log(cliente, direccion, ciudad, encargado, marca, modelo, nSerie, tipo, referenciaImages, EnFFAB, EnFFBC, EnFFCA, EnFNAN, EnFNBN, ENFNCN, CorrA, CorrB, CorrC, SalFFAB, SalFFBC, SalFFCA, SalFNAN, SalFNBN, SalFNCN, CorrSalidaA, CorrSalidaB, CorrSalidaC, FrecEntr, FrecSalid, PorCarga, TenBateria, CorrBateria, TempUPS, ModeloBateria, CantBaterias, AñoFabricacionBaterias, Observaciones, nombreRealizo, nombreRecibio, fechaRealizado, fechaRecibido, estado, usuarioCreador);
+    const parsedData = typeof data === 'string' ? JSON.parse(data) : data;
+    const { cliente, direccion, ciudad, encargado, marca, modelo, nSerie, tipo, EnFFAB, EnFFBC, EnFFCA, EnFNAN, EnFNBN, ENFNCN, CorrA, CorrB, CorrC, SalFFAB, SalFFBC, SalFFCA, SalFNAN, SalFNBN, SalFNCN, CorrSalidaA, CorrSalidaB, CorrSalidaC, FrecEntr, FrecSalid, PorCarga, TenBateria, CorrBateria, TempUPS, ModeloBateria, CantBaterias, AñoFabricacionBaterias, Observaciones, nombreRealizo, nombreRecibio, fechaRealizado, fechaRecibido } = parsedData;
+    console.log(cliente, direccion, ciudad, encargado, marca, modelo, nSerie, tipo, EnFFAB, EnFFBC, EnFFCA, EnFNAN, EnFNBN, ENFNCN, CorrA, CorrB, CorrC, SalFFAB, SalFFBC, SalFFCA, SalFNAN, SalFNBN, SalFNCN, CorrSalidaA, CorrSalidaB, CorrSalidaC, FrecEntr, FrecSalid, PorCarga, TenBateria, CorrBateria, TempUPS, ModeloBateria, CantBaterias, AñoFabricacionBaterias, Observaciones, nombreRealizo, nombreRecibio, fechaRealizado, fechaRecibido, estado, usuarioCreador);
 
     //Validamos que todos los datos obligatorios hayan sido enviados
     if (!cliente || !direccion || !ciudad || !encargado || !marca || !modelo || !nSerie || !tipo || !EnFFAB || !EnFFBC || !EnFFCA || !EnFNAN || !EnFNBN || !ENFNCN || !CorrA || !CorrB || !CorrC || !SalFFAB || !SalFFBC || !SalFFCA || !SalFNAN || !SalFNBN || !SalFNCN || !CorrSalidaA || !CorrSalidaB || !CorrSalidaC || !FrecEntr || !FrecSalid || !PorCarga || !TenBateria || !CorrBateria || !TempUPS || !ModeloBateria || !CantBaterias || !AñoFabricacionBaterias)
