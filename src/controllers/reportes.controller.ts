@@ -8,21 +8,8 @@ const numeroCoincidencias = 3;
 const reportesController: controllerProps = {
   //Obtenemos todos los reportes
   read: async (req, res) => {
-    const { termBusqueda, filterEstado, filterTipo } = req.query;
-
-    //Revisamos si hay o no filtros
-    const filterParams = {
-      termBusqueda: termBusqueda,
-      filterEstado: filterEstado === 'Todos' ? filterEstado : filterEstado,
-      filterTipo: filterTipo === 'Todos' ? filterTipo : filterTipo
-    }
-
-    //Validamos el tipo de los datos
-    if (typeof filterParams.termBusqueda !== 'string' || typeof filterParams.filterEstado !== 'string' || typeof filterParams.filterTipo !== 'string')
-      return res.status(400).send({ type: "warning", message: "Datos ingresados no válidos" });
-
     try {
-      // Creamos el query
+      // Creamos el query sin filtros
       const query: string = `
         SELECT rep.idReporte AS id,
           rep.cliente,
@@ -36,17 +23,10 @@ const reportesController: controllerProps = {
           rep.usuarioCreador AS creador
         FROM reportes rep
         JOIN equipos eq ON rep.idReporte = eq.idReporte
-        WHERE rep.cliente LIKE @termBusqueda
-        AND rep.estado LIKE @filterEstado
-        AND rep.tipo LIKE @filterTipo
         ORDER BY rep.fechaCreacion DESC`;
 
       const pool = await connectDB();
-      const result = await pool.request()
-        .input('termBusqueda', NVarChar, `%${filterParams.termBusqueda.trim()}%`)
-        .input('filterEstado', NVarChar, filterParams.filterEstado === 'Todos' ? '%' : filterParams.filterEstado.trim())
-        .input('filterTipo', NVarChar, filterParams.filterTipo === 'Todos' ? '%' : filterParams.filterTipo.trim())
-        .query(query);
+      const result = await pool.request().query(query);
 
       return res.send(result.recordset);
 
