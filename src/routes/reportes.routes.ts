@@ -21,7 +21,10 @@ const upload = multer({ storage: storage });
 reportesRouter.get("/", reportesController.read);
 reportesRouter.get("/readDash", reportesController.readDash);
 reportesRouter.get("/findMatch", reportesController.findMatch);
+reportesRouter.get("/readById/:id", reportesController.readById);
+reportesRouter.get("/findMatchDiscardId", reportesController.findMatchDiscardId);
 reportesRouter.post("/", upload.array('referenciaImages', 10), reportesController.create);
+reportesRouter.put("/", upload.array('referenciaImages', 10), reportesController.update);
 
 /*
 // RUTAS COMENTADAS PARA REPORTES RECIENTES Y BORRADORES

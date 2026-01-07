@@ -29,7 +29,7 @@ const reportesController: controllerProps = {
       const pool = await connectDB();
       const result = await pool.request().query(query);
 
-      const resFormato = result.recordset.map(record =>({
+      const resFormato = result.recordset.map(record => ({
         ...record,
         fechaCreacion: formatDate(record.fechaCreacion),
         fechaModificacion: formatDate(record.fechaModificacion)
@@ -37,7 +37,7 @@ const reportesController: controllerProps = {
 
       return res.send(resFormato);
 
-    } catch(error: any){
+    } catch (error: any) {
       console.error("Error al obtener los reportes:", error);
       res.status(500).send({ type: "fatal", message: "Error al obtener los reportes" });
     }
@@ -105,7 +105,6 @@ const reportesController: controllerProps = {
           borradores: borradoresResult.recordset
         };
 
-        console.log(response);
 
         //Enviamos la respuesta
         res.send(response);
@@ -126,9 +125,6 @@ const reportesController: controllerProps = {
   findMatch: async (req, res) => {
     //obtenemos parametros de busqueda
     const { numeroSerie } = req.query;
-    console.log(numeroSerie);
-
-
 
     //Validamos datos y el tipo de dato
     if (!numeroSerie)
@@ -174,12 +170,137 @@ const reportesController: controllerProps = {
 
   },
 
+  //Esta función se utilizará para encontrar las coincidencias en la base de datos sin tomar en cuenta el registro que se está modificando
+  findMatchDiscardId: async (req, res) => {
+    try {
+      // TODO: Implementar la lógica de actualización
+      return res.status(501).send({ type: "info", message: "Método update no implementado aún" });
+    } catch (error) {
+      console.error("Error al actualizar el reporte:", error);
+      return res.status(500).send({ type: "fatal", message: "Error al actualizar el reporte" });
+    }
+  },
+
+  //Obtener datos de un reporte por ID
+  readById: async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      if (!id) {
+        return res.status(400).send({ type: "warning", message: "ID de reporte requerido" });
+      }
+
+      const pool = await connectDB();
+
+      // Query para obtener el reporte con equipo
+      const queryReporte = `
+        SELECT 
+          r.idReporte AS id,
+          r.cliente,
+          r.direccion,
+          r.ciudad,
+          r.encargado,
+          r.tipo,
+          r.estado,
+          r.observaciones,
+          r.nombreRealizo,
+          r.nombreRecibio,
+          r.fechaCreacion,
+          r.fechaModificacion,
+          r.fechaRealizo,
+          r.fechaRecibio,
+          e.marca,
+          e.modelo,
+          e.nSerie,
+          e.modeloBateria,
+          e.cantidadBaterias,
+          e.anioFabricacionBaterias
+        FROM reportes r
+        JOIN equipos e ON r.idReporte = e.idReporte
+        WHERE r.idReporte = @id`;
+
+      const reporteResult = await pool.request()
+        .input('id', UniqueIdentifier, id)
+        .query(queryReporte);
+
+      if (reporteResult.recordset.length === 0) {
+        return res.status(404).send({ type: "warning", message: "Reporte no encontrado" });
+      }
+
+      const reporte = reporteResult.recordset[0];
+
+      // Query para mediciones electricas
+      const queryMediciones = `
+        SELECT 
+          enFFAB, enFFBC, enFFCA,
+          enFNAN, enFNBN, enFNCN,
+          CorrA, CorrB, CorrC,
+          SalFFAB, SalFFBC, SalFFCA,
+          SalFNAN, SalFNBN, SalFNCN,
+          CorrSalidaA, CorrSalidaB, CorrSalidaC
+        FROM mediciones_electricas
+        WHERE idReporte = @id`;
+
+      const medicionesResult = await pool.request()
+        .input('id', UniqueIdentifier, id)
+        .query(queryMediciones);
+
+      // Query para datos adicionales
+      const queryDatos = `
+        SELECT 
+          frecuenciaEntrada,
+          frecuenciaSalida,
+          porcentajeCarga,
+          tensionBateria,
+          corrienteBateria,
+          temperaturaUPS
+        FROM datosAdicionales
+        WHERE idReporte = @id`;
+
+      const datosResult = await pool.request()
+        .input('id', UniqueIdentifier, id)
+        .query(queryDatos);
+
+      // Query para imagenes
+      const queryImagenes = `
+        SELECT 
+          idImagen,
+          nombreArchivo,
+          urlArchivo,
+          tipoMime,
+          tamanio
+        FROM imagenesReferencia
+        WHERE idReporte = @id`;
+
+      const imagenesResult = await pool.request()
+        .input('id', UniqueIdentifier, id)
+        .query(queryImagenes);
+
+      // Combinar los resultados
+      const response = {
+        ...reporte,
+        fechaCreacion: formatDate(reporte.fechaCreacion),
+        fechaModificacion: formatDate(reporte.fechaModificacion),
+        fechaRealizo: reporte.fechaRealizo ? formatDate(reporte.fechaRealizo) : null,
+        fechaRecibio: reporte.fechaRecibio ? formatDate(reporte.fechaRecibio) : null,
+        mediciones: medicionesResult.recordset[0] || {},
+        datosAdicionales: datosResult.recordset[0] || {},
+        imagenes: imagenesResult.recordset
+      };
+
+      return res.send(response);
+
+    } catch (error: any) {
+      console.error("Error al obtener el reporte por ID:", error);
+      res.status(500).send({ type: "fatal", message: "Error al obtener el reporte" });
+    }
+  },
+
   create: async (req, res) => {
     //Obtenemos los parametros con body, que da el cuerpo de la solicitud http
     const { data, estado, usuarioCreador } = req.body;
     const parsedData = typeof data === 'string' ? JSON.parse(data) : data;
     const { cliente, direccion, ciudad, encargado, marca, modelo, nSerie, tipo, EnFFAB, EnFFBC, EnFFCA, EnFNAN, EnFNBN, ENFNCN, CorrA, CorrB, CorrC, SalFFAB, SalFFBC, SalFFCA, SalFNAN, SalFNBN, SalFNCN, CorrSalidaA, CorrSalidaB, CorrSalidaC, FrecEntr, FrecSalid, PorCarga, TenBateria, CorrBateria, TempUPS, ModeloBateria, CantBaterias, AñoFabricacionBaterias, Observaciones, nombreRealizo, nombreRecibio, fechaRealizado, fechaRecibido } = parsedData;
-    console.log(cliente, direccion, ciudad, encargado, marca, modelo, nSerie, tipo, EnFFAB, EnFFBC, EnFFCA, EnFNAN, EnFNBN, ENFNCN, CorrA, CorrB, CorrC, SalFFAB, SalFFBC, SalFFCA, SalFNAN, SalFNBN, SalFNCN, CorrSalidaA, CorrSalidaB, CorrSalidaC, FrecEntr, FrecSalid, PorCarga, TenBateria, CorrBateria, TempUPS, ModeloBateria, CantBaterias, AñoFabricacionBaterias, Observaciones, nombreRealizo, nombreRecibio, fechaRealizado, fechaRecibido, estado, usuarioCreador);
 
     //Validamos que todos los datos obligatorios hayan sido enviados
     if (!cliente || !direccion || !ciudad || !encargado || !marca || !modelo || !nSerie || !tipo || !EnFFAB || !EnFFBC || !EnFFCA || !EnFNAN || !EnFNBN || !ENFNCN || !CorrA || !CorrB || !CorrC || !SalFFAB || !SalFFBC || !SalFFCA || !SalFNAN || !SalFNBN || !SalFNCN || !CorrSalidaA || !CorrSalidaB || !CorrSalidaC || !FrecEntr || !FrecSalid || !PorCarga || !TenBateria || !CorrBateria || !TempUPS || !ModeloBateria || !CantBaterias || !AñoFabricacionBaterias)
@@ -401,6 +522,19 @@ const reportesController: controllerProps = {
       return res.status(500).send({ type: "fatal", message: "Error al crear el reporte" });
     }
   },
+
+  // Actualizar un reporte existente
+  update: async (req, res) => {
+    try {
+      // TODO: Implementar la lógica de actualización
+      return res.status(501).send({ type: "info", message: "Método update no implementado aún" });
+    } catch (error) {
+      console.error("Error al actualizar el reporte:", error);
+      return res.status(500).send({ type: "fatal", message: "Error al actualizar el reporte" });
+    }
+  },
+
+
 
 };
 
