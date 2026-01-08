@@ -2,7 +2,7 @@ import controllerProps from "./interfaces";
 import connectDB from "../model/dbConnection.model";
 import { Bit, Request, NVarChar, Date, UniqueIdentifier, Transaction, Int, Decimal } from "mssql";
 import { MAYUS_REG_EX } from "../const/regex";
-import { formatDate } from "../functions/formatDate";
+import { formatDate, formatDateForInputs } from "../functions/formatDate";
 
 const numeroCoincidencias = 3;
 
@@ -172,12 +172,53 @@ const reportesController: controllerProps = {
 
   //Esta función se utilizará para encontrar las coincidencias en la base de datos sin tomar en cuenta el registro que se está modificando
   findMatchDiscardId: async (req, res) => {
+    //Obtenemos los parametros de búsqueda
+    const { idReporte, numeroSerie } = req.query;
+
+    //Validamos los datos obligatorios y su tipo
+    if (!idReporte || !numeroSerie)
+      return res.status(400).send({ type: "warning", message: "Faltan datos por completar" });
+
+    if (typeof idReporte !== "string" || typeof numeroSerie !== "string")
+      return res.status(400).send({ type: "warning", message: "Dato ingresado no válido" });
+
+    //Validamos que la cadena no esté vacía y que no sean solo espacios
+    if (idReporte.trim().length < 1 || numeroSerie.trim().length < 1)
+      return res.status(400).send({ type: "warning", message: "Faltan datos por completar" });
+
+    //Validamos que cumplan las expresiones regulares
+    if (!MAYUS_REG_EX.test(numeroSerie))
+      return res.status(400).send({ type: "warning", message: "Datos ingresados no válidos" });
+
+    //Verificamos si ya se encuentra en la base de datos
     try {
-      // TODO: Implementar la lógica de actualización
-      return res.status(501).send({ type: "info", message: "Método update no implementado aún" });
+      //Creamos el query
+      const queryBusquedaIndividual = `
+        SELECT COUNT(1) AS count
+        FROM equipos
+        WHERE nSerie = @numeroSerie 
+        AND idReporte != @idReporte`;
+
+      //Obtenemos la conexion
+      const pool = await connectDB();
+      //Enviamos el query y escapamos los datos para evitar inyecciones SQL
+      //Limpiamos las entradas para evitar espacios al inicio y final
+      const resultBusquedaIndividual = await pool.request()
+        .input("numeroSerie", NVarChar, numeroSerie.trim())
+        .input("idReporte", UniqueIdentifier, idReporte)
+        .query(queryBusquedaIndividual);
+
+      //Validamos si el resultado se encuentra
+      const count = resultBusquedaIndividual.recordset[0].count;
+
+      //Si se encuentra un registro igual se acaba el proceso y enviamos un mensaje de aviso
+      if (count > 0)
+        return res.status(202).send({ type: "warning", message: "Registro duplicado" });
+
+      return res.send("No se encontraron coincidencias");
     } catch (error) {
-      console.error("Error al actualizar el reporte:", error);
-      return res.status(500).send({ type: "fatal", message: "Error al actualizar el reporte" });
+      console.error("Error al buscar coincidencias", error);
+      res.status(500).send({ type: "fatal", message: "Error al buscar coincidencias" });
     }
   },
 
@@ -281,8 +322,8 @@ const reportesController: controllerProps = {
         ...reporte,
         fechaCreacion: formatDate(reporte.fechaCreacion),
         fechaModificacion: formatDate(reporte.fechaModificacion),
-        fechaRealizo: reporte.fechaRealizo ? formatDate(reporte.fechaRealizo) : null,
-        fechaRecibio: reporte.fechaRecibio ? formatDate(reporte.fechaRecibio) : null,
+        fechaRealizo: reporte.fechaRealizo ? formatDateForInputs(reporte.fechaRealizo) : null,
+        fechaRecibio: reporte.fechaRecibio ? formatDateForInputs(reporte.fechaRecibio) : null,
         mediciones: medicionesResult.recordset[0] || {},
         datosAdicionales: datosResult.recordset[0] || {},
         imagenes: imagenesResult.recordset
@@ -487,25 +528,31 @@ const reportesController: controllerProps = {
 
         // Insertar imágenes de referencia
         const files = (req as any).files;
-        if (files && files.length > 0) {
+         if (files && files.length > 0) {
           const requestImagenes = new Request(transaction);
 
-          for (const file of files) {
-            const queryInsertImagen = `
-                INSERT INTO imagenesReferencia (
-                  idReporte, nombreArchivo, urlArchivo, tipoMime, tamanio
-                ) VALUES (
-                  @idReporte, @nombreArchivo, @urlArchivo, @tipoMime, @tamanio
-                )`;
+          // Construimos el INSERT con múltiples filas
+          const values = files.map((_: any, i: any) =>
+            `(@idReporte${i}, @nombreArchivo${i}, @urlArchivo${i}, @tipoMime${i}, @tamanio${i})`
+          ).join(", ");
 
-            await requestImagenes
-              .input('idReporte', UniqueIdentifier, idReporte)
-              .input('nombreArchivo', NVarChar, file.originalname)
-              .input('urlArchivo', NVarChar, `/uploads/${file.filename}`)
-              .input('tipoMime', NVarChar, file.mimetype)
-              .input('tamanio', Int, file.size)
-              .query(queryInsertImagen);
-          }
+          const queryInsertImagenes = `
+            INSERT INTO imagenesReferencia (
+            idReporte, nombreArchivo, urlArchivo, tipoMime, tamanio
+            ) VALUES ${values};`;
+
+          // Agregamos parámetros para cada archivo
+          files.forEach((file: { originalname: any; filename: any; mimetype: any; size: any; }, i: any) => {
+            requestImagenes
+              .input(`idReporte${i}`, UniqueIdentifier, idReporte)
+              .input(`nombreArchivo${i}`, NVarChar, file.originalname)
+              .input(`urlArchivo${i}`, NVarChar, `/uploads/${file.filename}`)
+              .input(`tipoMime${i}`, NVarChar, file.mimetype)
+              .input(`tamanio${i}`, Int, file.size);
+          });
+
+          // Ejecutamos el query una sola vez
+          await requestImagenes.query(queryInsertImagenes);
         }
 
         // Confirmar la transacción si todo salió bien
@@ -525,13 +572,201 @@ const reportesController: controllerProps = {
 
   // Actualizar un reporte existente
   update: async (req, res) => {
+    //Se obtienen los parametros con body, que da el cuerpo de la solicitud http
+    const { data, estado, usuarioCreador } = req.body;
+    const parsedData = typeof data === 'string' ? JSON.parse(data) : data
+    const { idReporte, cliente, direccion, ciudad, encargado, marca, modelo, nSerie, tipo, EnFFAB, EnFFBC, EnFFCA, EnFNAN, EnFNBN, ENFNCN, CorrA, CorrB, CorrC, SalFFAB, SalFFBC, SalFFCA, SalFNAN, SalFNBN, SalFNCN, CorrSalidaA, CorrSalidaB, CorrSalidaC, FrecEntr, FrecSalid, PorCarga, TenBateria, CorrBateria, TempUPS, ModeloBateria, CantBaterias, AñoFabricacionBaterias, Observaciones, nombreRealizo, nombreRecibio, fechaRealizado, fechaRecibido } = parsedData;
+
+    //Validamos que todos los datos obligatorios hayan sido enviados
+    if (!cliente || !direccion || !ciudad || !encargado || !marca || !modelo || !nSerie || !tipo || !EnFFAB || !EnFFBC || !EnFFCA || !EnFNAN || !EnFNBN || !ENFNCN || !CorrA || !CorrB || !CorrC || !SalFFAB || !SalFFBC || !SalFFCA || !SalFNAN || !SalFNBN || !SalFNCN || !CorrSalidaA || !CorrSalidaB || !CorrSalidaC || !FrecEntr || !FrecSalid || !PorCarga || !TenBateria || !CorrBateria || !TempUPS || !ModeloBateria || !CantBaterias || !AñoFabricacionBaterias)
+      return res.status(400).send({ type: "warning", message: "Faltan datos por completar1" });
+
+    //Validamos el tipo de dato de los parametros
+    if (typeof cliente !== 'string' || typeof direccion !== 'string' || typeof ciudad !== 'string' || typeof encargado !== 'string' || typeof marca !== 'string' || typeof modelo !== 'string' || typeof nSerie !== 'string' || typeof tipo !== 'string' || typeof EnFFAB !== 'string' || typeof EnFFBC !== 'string' || typeof EnFFCA !== 'string' || typeof EnFNAN !== 'string' || typeof EnFNBN !== 'string' || typeof ENFNCN !== 'string' || typeof CorrA !== 'string' || typeof CorrB !== 'string' || typeof CorrC !== 'string' || typeof SalFFAB !== 'string' || typeof SalFFBC !== 'string' || typeof SalFFCA !== 'string' || typeof SalFNAN !== 'string' || typeof SalFNBN !== 'string' || typeof SalFNCN !== 'string' || typeof CorrSalidaA !== 'string' || typeof CorrSalidaB !== 'string' || typeof CorrSalidaC !== 'string' || typeof FrecEntr !== 'string' || typeof FrecSalid !== 'string' || typeof PorCarga !== 'string' || typeof TenBateria !== 'string' || typeof CorrBateria !== 'string' || typeof TempUPS !== 'string' || typeof ModeloBateria !== 'string' || typeof CantBaterias !== 'string' || typeof AñoFabricacionBaterias !== 'string' || typeof Observaciones !== 'string' || typeof nombreRealizo !== 'string' || typeof nombreRecibio !== 'string' || typeof fechaRealizado !== 'string' || typeof fechaRecibido !== 'string')
+      return res.status(400).send({ type: "warning", message: "Datos ingresados no válidos1" });
+
+    //Usaremos un doble try catch para manejar los errores al ser una transacción
     try {
-      // TODO: Implementar la lógica de actualización
-      return res.status(501).send({ type: "info", message: "Método update no implementado aún" });
+      //Iniciaremos el proceso de inserción usando transacciones
+      //Obtendremos primero la conexion
+      const pool = await connectDB();
+      const transaction = new Transaction(pool);
+      try {
+        await transaction.begin();
+
+        //Inicializamos el request para las consultas dentro de la transacción
+        const request = new Request(transaction);
+
+        //Query para actualizar el reporte
+        const queryUpdateReporte =
+          `UPDATE reportes 
+        SET cliente = @cliente,
+        direccion = @direccion,
+        ciudad = @ciudad,
+        encargado = @encargado,
+        tipo = @tipo,
+        estado = @estado,
+        observaciones = @observaciones,
+        nombreRealizo = @nombreRealizo,
+        nombreRecibio = @nombreRecibio,
+        usuarioCreador = @usuarioCreador,
+        fechaRealizo = @fechaRealizo,
+        fechaRecibio = @fechaRecibio,
+        fechaModificacion = GETDATE()
+        WHERE idReporte = @idReporte`;
+
+        //Enviamos el query y escapamos los datos para evitar inyecciones
+        //Limpiamos las entradas para evitar espacios al inicio y final
+        await request
+          .input("idReporte", UniqueIdentifier, idReporte)
+          .input("cliente", NVarChar, cliente.trim())
+          .input("direccion", NVarChar, direccion.trim())
+          .input("ciudad", NVarChar, ciudad.trim())
+          .input("encargado", NVarChar, encargado.trim())
+          .input("tipo", NVarChar, tipo.trim())
+          .input("estado", NVarChar, estado.trim())
+          .input("observaciones", NVarChar, Observaciones.trim())
+          .input("nombreRealizo", NVarChar, nombreRealizo.trim())
+          .input("nombreRecibio", NVarChar, nombreRecibio.trim())
+          .input("usuarioCreador", NVarChar, usuarioCreador.trim() || "UsuarioPrueba")
+          .input("fechaRealizo", Date, fechaRealizado || null)
+          .input("fechaRecibio", Date, fechaRecibido || null)
+          .query(queryUpdateReporte);
+
+        //Preparamos el requesta para editaer equipos
+        const requestEquipo = new Request(transaction);
+
+        //Preparamos el query
+        const queryUpdateEquipo =
+          `UPDATE equipos
+          SET marca = @marca,
+          modelo = @modelo,
+          nSerie = @nSerie,
+          modeloBateria = @modeloBateria,
+          cantidadBaterias = @cantBaterias,
+          anioFabricacionBaterias = @añoFabricacionBaterias
+          WHERE idReporte = @idReporte`;
+
+        //Enviamos el query y escapamos los datos para evitar inyecciones
+        await requestEquipo
+          .input("idReporte", UniqueIdentifier, idReporte)
+          .input("marca", NVarChar, marca.trim())
+          .input("modelo", NVarChar, modelo.trim())
+          .input("nSerie", NVarChar, nSerie.trim())
+          .input("modeloBateria", NVarChar, ModeloBateria.trim())
+          .input("cantBaterias", Int, parseInt(CantBaterias))
+          .input("añoFabricacionBaterias", Int, parseInt(AñoFabricacionBaterias))
+          .query(queryUpdateEquipo);
+
+        //Preparamos el request para actualizar las mediciones eléctricas
+        const requestMediciones = new Request(transaction);
+
+        //Preparamos el query
+        const queryUpdateMediciones =
+          `UPDATE mediciones_electricas
+          SET enFFAB = @enFFAB, enFFBC = @enFFBC, enFFCA = @enFFCA,
+          enFNAN = @enFNAN, enFNBN = @enFNBN, enFNCN = @enFNCN,
+          CorrA = @CorrA, CorrB = @CorrB, CorrC = @CorrC,
+          SalFFAB = @SalFFAB, SalFFBC = @SalFFBC, SalFFCA = @SalFFCA,
+          SalFNAN = @SalFNAN, SalFNBN = @SalFNBN, SalFNCN = @SalFNCN,
+          CorrSalidaA = @CorrSalidaA, CorrSalidaB = @CorrSalidaB, CorrSalidaC = @CorrSalidaC
+          WHERE idReporte = @idReporte`;
+
+        //Enviamos el query y escapamos los datos para evitar inyecciones
+        await requestMediciones
+          .input('idReporte', UniqueIdentifier, idReporte)
+          .input('enFFAB', Decimal, parseFloat(EnFFAB))
+          .input('enFFBC', Decimal, parseFloat(EnFFBC))
+          .input('enFFCA', Decimal, parseFloat(EnFFCA))
+          .input('enFNAN', Decimal, parseFloat(EnFNAN))
+          .input('enFNBN', Decimal, parseFloat(EnFNBN))
+          .input('enFNCN', Decimal, parseFloat(ENFNCN))
+          .input('CorrA', Decimal, parseFloat(CorrA))
+          .input('CorrB', Decimal, parseFloat(CorrB))
+          .input('CorrC', Decimal, parseFloat(CorrC))
+          .input('SalFFAB', Decimal, parseFloat(SalFFAB))
+          .input('SalFFBC', Decimal, parseFloat(SalFFBC))
+          .input('SalFFCA', Decimal, parseFloat(SalFFCA))
+          .input('SalFNAN', Decimal, parseFloat(SalFNAN))
+          .input('SalFNBN', Decimal, parseFloat(SalFNBN))
+          .input('SalFNCN', Decimal, parseFloat(SalFNCN))
+          .input('CorrSalidaA', Decimal, parseFloat(CorrSalidaA))
+          .input('CorrSalidaB', Decimal, parseFloat(CorrSalidaB))
+          .input('CorrSalidaC', Decimal, parseFloat(CorrSalidaC))
+          .query(queryUpdateMediciones);
+
+        //Preparamos el request para actualizar los datos adicionales
+        const requestDatos = new Request(transaction);
+
+        //Preparamos el query
+        const queryUpdateDatos =
+          `UPDATE datosAdicionales
+          SET frecuenciaEntrada = @frecuenciaEntrada,
+          frecuenciaSalida = @frecuenciaSalida,
+          porcentajeCarga = @porcentajeCarga,
+          tensionBateria = @tensionBateria,
+          corrienteBateria = @corrienteBateria,
+          temperaturaUPS = @temperaturaUPS
+          WHERE idReporte = @idReporte`;
+
+        //Enviamos el query y escapamos los datos para evitar inyecciones
+        await requestDatos
+          .input('idReporte', UniqueIdentifier, idReporte)
+          .input('frecuenciaEntrada', Decimal, parseFloat(FrecEntr))
+          .input('frecuenciaSalida', Decimal, parseFloat(FrecSalid))
+          .input('porcentajeCarga', Decimal, parseFloat(PorCarga))
+          .input('tensionBateria', Decimal, parseFloat(TenBateria))
+          .input('corrienteBateria', Decimal, parseFloat(CorrBateria))
+          .input('temperaturaUPS', Decimal, parseFloat(TempUPS))
+          .query(queryUpdateDatos);
+
+        //Insertar nuevas imágenes de referencia si las hay
+        const files = (req as any).files;
+
+        if (files && files.length > 0) {
+          const requestImagenes = new Request(transaction);
+
+          // Construimos el INSERT con múltiples filas
+          const values = files.map((_: any, i: any) =>
+            `(@idReporte${i}, @nombreArchivo${i}, @urlArchivo${i}, @tipoMime${i}, @tamanio${i})`
+          ).join(", ");
+
+          const queryInsertImagenes = `
+            INSERT INTO imagenesReferencia (
+            idReporte, nombreArchivo, urlArchivo, tipoMime, tamanio
+            ) VALUES ${values};`;
+
+          // Agregamos parámetros para cada archivo
+          files.forEach((file: { originalname: any; filename: any; mimetype: any; size: any; }, i: any) => {
+            requestImagenes
+              .input(`idReporte${i}`, UniqueIdentifier, idReporte)
+              .input(`nombreArchivo${i}`, NVarChar, file.originalname)
+              .input(`urlArchivo${i}`, NVarChar, `/uploads/${file.filename}`)
+              .input(`tipoMime${i}`, NVarChar, file.mimetype)
+              .input(`tamanio${i}`, Int, file.size);
+          });
+
+          // Ejecutamos el query una sola vez
+          await requestImagenes.query(queryInsertImagenes);
+        }
+
+
+        //Confirmar la transacción si todo salió bien
+        await transaction.commit();
+        return res.send("Correcto");
+      } catch (error) {
+        //Si hay error, hacemos rollback para deshacer los cambios
+        await transaction.rollback();
+        console.error("Error al actualizar el reporte: ", error);
+        return res.status(500).send({ type: "fatal", message: "Error al actualizar el reporte" });
+      }
+
     } catch (error) {
-      console.error("Error al actualizar el reporte:", error);
+      console.error("Error al actualizar el reporte: ", error);
       return res.status(500).send({ type: "fatal", message: "Error al actualizar el reporte" });
     }
+
+
   },
 
 
