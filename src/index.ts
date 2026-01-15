@@ -8,9 +8,6 @@ import reportesRouter from "./routes/reportes.routes";
 const app= express();
 app.use(express.json());
 
-// Servir archivos estáticos desde la carpeta uploads
-app.use('/uploads', express.static('uploads'));
-
 //Configuramos cors para el envío y uso de cookies al frontend
 const FRONTEND_HOST = process.env.FRONTEND_HOST || "http://localhost";
 const FRONTEND_PORT = process.env.FRONTEND_PORT || "5151";
@@ -19,6 +16,14 @@ app.use(cors({
   origin: [`${FRONTEND_HOST}:${FRONTEND_PORT}`],
   credentials: true
 }));
+
+// Servir archivos estáticos desde la carpeta uploads con CORS habilitado
+app.use('/uploads', (req, res, next) => {
+  res.header('Access-Control-Allow-Origin', `${FRONTEND_HOST}:${FRONTEND_PORT}`);
+  res.header('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  next();
+}, express.static('uploads'));
 
 app.get('/api', (_, res) => {
   res.send("Bienvenido a la API del sistema de generacion de reportes");
