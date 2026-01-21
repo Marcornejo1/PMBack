@@ -25,6 +25,7 @@ reportesRouter.get("/readById/:id", reportesController.readById);
 reportesRouter.get("/findMatchDiscardId", reportesController.findMatchDiscardId);
 reportesRouter.post("/", upload.array('referenciaImages', 10), reportesController.create);
 reportesRouter.put("/", upload.array('referenciaImages', 10), reportesController.update);
+reportesRouter.delete("/:id", reportesController.delete);
 
 /*
 // RUTAS COMENTADAS PARA REPORTES RECIENTES Y BORRADORES

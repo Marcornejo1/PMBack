@@ -3,6 +3,8 @@ import connectDB from "../model/dbConnection.model";
 import { Bit, Request, NVarChar, Date, UniqueIdentifier, Transaction, Int, Decimal } from "mssql";
 import { MAYUS_REG_EX } from "../const/regex";
 import { formatDate, formatDateForInputs } from "../functions/formatDate";
+import fs from "fs";
+import path from "path";
 
 const numeroCoincidencias = 3;
 
@@ -528,7 +530,7 @@ const reportesController: controllerProps = {
 
         // Insertar imágenes de referencia
         const files = (req as any).files;
-         if (files && files.length > 0) {
+        if (files && files.length > 0) {
           const requestImagenes = new Request(transaction);
 
           // Construimos el INSERT con múltiples filas
@@ -769,6 +771,93 @@ const reportesController: controllerProps = {
 
   },
 
+  //Eliminar un reporte existente
+  delete: async (req, res) => {
+    const id = req.params.id;
+
+    //Validamos que se haya enviado el id
+    if (!id)
+      return res.status(400).send({ type: "fatal", message: "Faltan datos por completar" });
+
+    //Validamos que el id sea una cadena de texto
+    if (typeof id !== "string")
+      return res.status(400).send({ type: "fatal", message: "Dato ingresado no válido" });
+
+    try {
+      const pool = await connectDB();
+
+      //Al tener que eliminar datos de varias tablas, usaremos transacciones
+      const transaction = new Transaction(pool);
+
+      try {
+        await transaction.begin();
+
+        const request = new Request(transaction);
+
+        //Primero obtenemos los archivos asociados al reporte
+        const queryGetFiles = `
+          SELECT DISTINCT imagenRuta
+          FROM imagenes
+          WHERE idReporte = @idReporte AND imagenRuta IS NOT NULL
+        `;
+
+        request.input("idReporte", UniqueIdentifier, id);
+        const filesResult = await request.query(queryGetFiles);
+
+        //Eliminamos los archivos de la carpeta uploads
+        const uploadsPath = path.join(process.cwd(), "uploads");
+
+        for (const file of filesResult.recordset) {
+          try {
+            const filePath = path.join(uploadsPath, file.imagenRuta);
+
+            //Verificamos que el archivo existe antes de eliminarlo
+            if (fs.existsSync(filePath)) {
+              fs.unlinkSync(filePath);
+              console.log(`Archivo eliminado: ${filePath}`);
+            }
+          } catch (fileError: any) {
+            console.warn(`No se pudo eliminar el archivo: ${file.imagenRuta}`, fileError.message);
+            //Continuamos con la siguiente iteración si falla un archivo
+          }
+        }
+
+        //Ahora eliminamos de las tablas de base de datos
+        const queryDeleteImages = `
+          DELETE FROM imagenes
+          WHERE idReporte = @idReporte
+        `;
+
+        const queryDeleteEquipos = `
+          DELETE FROM equipos
+          WHERE idReporte = @idReporte
+        `;
+
+        const queryDeleteReporte = `
+          DELETE FROM reportes
+          WHERE idReporte = @idReporte
+        `;
+
+        await request.query(queryDeleteImages);
+        await request.query(queryDeleteEquipos);
+        await request.query(queryDeleteReporte);
+
+        //Confirmamos la transacción
+        await transaction.commit();
+
+        return res.status(200).send({ type: "success", message: "Reporte eliminado correctamente" });
+
+      } catch (error) {
+        await transaction.rollback();
+        console.error("Error en transacción:", error);
+        return res.status(500).send({ type: "fatal", message: "Error al eliminar el reporte" });
+      }
+
+    } catch (error) {
+      console.error("Error al eliminar reporte:", error);
+      return res.status(500).send({ type: "fatal", message: "Error al eliminar el reporte" });
+    }
+  },
 
 
 };
