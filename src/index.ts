@@ -8,6 +8,25 @@ import reportesRouter from "./routes/reportes.routes";
 const app= express();
 app.use(express.json());
 
+// Headers de seguridad
+app.use((req, res, next) => {
+  // Prevenir XSS
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  
+  // Content Security Policy - Evita ejecutar scripts externos
+  res.setHeader(
+    'Content-Security-Policy',
+    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'"
+  );
+  
+  // Strict Transport Security (activarse cuando tengas HTTPS)
+  // res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  
+  next();
+});
+
 //Configuramos cors para el envío y uso de cookies al frontend
 const FRONTEND_HOST = process.env.FRONTEND_HOST || "http://localhost";
 const FRONTEND_PORT = process.env.FRONTEND_PORT || "5151";

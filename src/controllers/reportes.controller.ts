@@ -8,11 +8,31 @@ import path from "path";
 
 const numeroCoincidencias = 3;
 
+// FUNCIÓN AUXILIAR PREPARADA PARA FUTURO: Control de acceso con roles
+// Descomentar cuando se implemente sistema de roles/administradores
+const construirFiltroUsuario = (usuario: string, esAdmin?: boolean): string => {
+  // Si es admin, no aplicar filtro de usuario
+  if (esAdmin) {
+    return ""; // Sin WHERE, ve todos los reportes
+  }
+  // Si es usuario normal, filtrar por usuario
+  return `WHERE rep.usuarioCreador = @usuario`;
+};
+
 const reportesController: controllerProps = {
-  //Obtenemos todos los reportes
+  //Obtenemos todos los reportes filtrados por usuario (o todos si es admin)
   read: async (req, res) => {
     try {
-      // Creamos el query sin filtros
+      //Obtenemos el usuario del middleware de autenticación
+      const usuario = req.usuario;
+      const esAdmin = req.esAdmin; // Preparado para futuro
+
+      if (!usuario) {
+        return res.status(401).send({ type: "fatal", message: "Usuario no autenticado" });
+      }
+
+      // Query que filtra por el usuario creador (a menos que sea admin)
+      const filtro = esAdmin ? "" : "WHERE rep.usuarioCreador = @usuario";
       const query: string = `
         SELECT rep.idReporte AS id,
           rep.cliente,
@@ -26,10 +46,18 @@ const reportesController: controllerProps = {
           rep.usuarioCreador AS creador
         FROM reportes rep
         JOIN equipos eq ON rep.idReporte = eq.idReporte
+        ${filtro}
         ORDER BY rep.fechaCreacion DESC`;
 
       const pool = await connectDB();
-      const result = await pool.request().query(query);
+      const request = pool.request();
+      
+      // Solo agregar parámetro usuario si no es admin
+      if (!esAdmin) {
+        request.input('usuario', NVarChar, usuario);
+      }
+      
+      const result = await request.query(query);
 
       const resFormato = result.recordset.map(record => ({
         ...record,
@@ -45,9 +73,16 @@ const reportesController: controllerProps = {
     }
   },
 
-  //Obtenemos reportes para el Dashboard
-  readDash: async (_, res) => {
+  //Obtenemos reportes para el Dashboard filtrados por usuario
+  readDash: async (req, res) => {
     try {
+      //Obtenemos el usuario del middleware de autenticación
+      const usuario = req.usuario;
+
+      if (!usuario) {
+        return res.status(401).send({ type: "fatal", message: "Usuario no autenticado" });
+      }
+
       //Conectamos a la base de datos
       const pool = await connectDB();
       const transaction = new Transaction(pool);
@@ -58,7 +93,7 @@ const reportesController: controllerProps = {
         //Inicializamos el request para realizar consultas dentro de la transacción
         const request = new Request(transaction);
 
-        //Query para obtener estadísticas del dashboard
+        //Query para obtener estadísticas del dashboard filtrado por usuario
         const queryEstadisticas = `
           SELECT
             ISNULL(COUNT(*), 0) as totalReportes,
@@ -66,9 +101,10 @@ const reportesController: controllerProps = {
             ISNULL(SUM(CASE WHEN estado = 'Borrador' THEN 1 ELSE 0 END), 0) as reportesPendientes,
             ISNULL(SUM(CASE WHEN YEAR(fechaCreacion) = YEAR(GETDATE()) AND MONTH(fechaCreacion) = MONTH(GETDATE()) THEN 1 ELSE 0 END), 0) as reportesMesActual
           FROM reportes
+          WHERE usuarioCreador = @usuario
         `;
 
-        //Query para obtener reportes recientes (últimos 5)
+        //Query para obtener reportes recientes (últimos 5) del usuario
         const queryReportesRecientes = `
           SELECT TOP 5
             CAST(ISNULL(idReporte, '00000000-0000-0000-0000-000000000000') AS NVARCHAR(36)) as id,
@@ -77,10 +113,11 @@ const reportesController: controllerProps = {
             ISNULL(tipo, '') as tipo,
             ISNULL(estado, '') as estado
           FROM reportes
+          WHERE usuarioCreador = @usuario
           ORDER BY ISNULL(fechaCreacion, GETDATE()) DESC
         `;
 
-        //Query para obtener borradores
+        //Query para obtener borradores del usuario
         const queryBorradores = `
           SELECT
             CAST(ISNULL(idReporte, '00000000-0000-0000-0000-000000000000') AS NVARCHAR(36)) as id,
@@ -88,14 +125,16 @@ const reportesController: controllerProps = {
             CONVERT(VARCHAR(19), ISNULL(fechaCreacion, GETDATE()), 120) as fechaGuardado,
             ISNULL(0, 0) as porcentajeCompletado
           FROM reportes
-          WHERE ISNULL(estado, '') = 'Borrador'
+          WHERE ISNULL(estado, '') = 'Borrador' AND usuarioCreador = @usuario
           ORDER BY ISNULL(fechaCreacion, GETDATE()) DESC
         `;
 
         //Ejecutamos todas las consultas
-        const estadisticasResult = await request.query(queryEstadisticas);
-        const recientesResult = await request.query(queryReportesRecientes);
-        const borradoresResult = await request.query(queryBorradores);
+        const estadisticasResult = await request.input('usuario', NVarChar, usuario).query(queryEstadisticas);
+        const recientesRequest = new Request(transaction);
+        const recientesResult = await recientesRequest.input('usuario', NVarChar, usuario).query(queryReportesRecientes);
+        const borradoresRequest = new Request(transaction);
+        const borradoresResult = await borradoresRequest.input('usuario', NVarChar, usuario).query(queryBorradores);
 
         //Confirmar la transacción
         await transaction.commit();
@@ -106,7 +145,6 @@ const reportesController: controllerProps = {
           reportesRecientes: recientesResult.recordset,
           borradores: borradoresResult.recordset
         };
-
 
         //Enviamos la respuesta
         res.send(response);
@@ -224,18 +262,23 @@ const reportesController: controllerProps = {
     }
   },
 
-  //Obtener datos de un reporte por ID
+  //Obtener datos de un reporte por ID (validando que el usuario sea el creador)
   readById: async (req, res) => {
     try {
       const { id } = req.params;
+      const usuario = req.usuario;
 
       if (!id) {
         return res.status(400).send({ type: "warning", message: "ID de reporte requerido" });
       }
 
+      if (!usuario) {
+        return res.status(401).send({ type: "fatal", message: "Usuario no autenticado" });
+      }
+
       const pool = await connectDB();
 
-      // Query para obtener el reporte con equipo
+      // Query para obtener el reporte con equipo (validando que sea del usuario)
       const queryReporte = `
         SELECT 
           r.idReporte AS id,
@@ -252,6 +295,7 @@ const reportesController: controllerProps = {
           r.fechaModificacion,
           r.fechaRealizo,
           r.fechaRecibio,
+          r.usuarioCreador,
           e.marca,
           e.modelo,
           e.nSerie,
@@ -260,14 +304,15 @@ const reportesController: controllerProps = {
           e.anioFabricacionBaterias
         FROM reportes r
         JOIN equipos e ON r.idReporte = e.idReporte
-        WHERE r.idReporte = @id`;
+        WHERE r.idReporte = @id AND r.usuarioCreador = @usuario`;
 
       const reporteResult = await pool.request()
         .input('id', UniqueIdentifier, id)
+        .input('usuario', NVarChar, usuario)
         .query(queryReporte);
 
       if (reporteResult.recordset.length === 0) {
-        return res.status(404).send({ type: "warning", message: "Reporte no encontrado" });
+        return res.status(404).send({ type: "warning", message: "Reporte no encontrado o no tienes permiso para acceder" });
       }
 
       const reporte = reporteResult.recordset[0];
@@ -341,7 +386,13 @@ const reportesController: controllerProps = {
 
   create: async (req, res) => {
     //Obtenemos los parametros con body, que da el cuerpo de la solicitud http
-    const { data, estado, usuarioCreador } = req.body;
+    const { data, estado } = req.body;
+    const usuario = req.usuario; // Obtener del middleware de autenticación
+    
+    if (!usuario) {
+      return res.status(401).send({ type: "fatal", message: "Usuario no autenticado" });
+    }
+
     const parsedData = typeof data === 'string' ? JSON.parse(data) : data;
     const { cliente, direccion, ciudad, encargado, marca, modelo, nSerie, tipo, EnFFAB, EnFFBC, EnFFCA, EnFNAN, EnFNBN, ENFNCN, CorrA, CorrB, CorrC, SalFFAB, SalFFBC, SalFFCA, SalFNAN, SalFNBN, SalFNCN, CorrSalidaA, CorrSalidaB, CorrSalidaC, FrecEntr, FrecSalid, PorCarga, TenBateria, CorrBateria, TempUPS, ModeloBateria, CantBaterias, AñoFabricacionBaterias, Observaciones, nombreRealizo, nombreRecibio, fechaRealizado, fechaRecibido } = parsedData;
 
@@ -405,7 +456,7 @@ const reportesController: controllerProps = {
           .input("observaciones", NVarChar, Observaciones.trim())
           .input("nombreRealizo", NVarChar, nombreRealizo.trim())
           .input("nombreRecibio", NVarChar, nombreRecibio.trim())
-          .input("usuarioCreador", NVarChar, usuarioCreador.trim() || "UsuarioPrueba") //Temporal hasta que se implemente el sistema de usuarios
+          .input("usuarioCreador", NVarChar, usuario) // Usar el usuario autenticado
           .input("fechaRealizo", Date, fechaRealizado || null)
           .input("fechaRecibio", Date, fechaRecibido || null)
           .query(queryInsertReporte);
@@ -575,7 +626,13 @@ const reportesController: controllerProps = {
   // Actualizar un reporte existente
   update: async (req, res) => {
     //Se obtienen los parametros con body, que da el cuerpo de la solicitud http
-    const { data, estado, usuarioCreador } = req.body;
+    const { data, estado } = req.body;
+    const usuario = req.usuario; // Obtener del middleware de autenticación
+    
+    if (!usuario) {
+      return res.status(401).send({ type: "fatal", message: "Usuario no autenticado" });
+    }
+
     const parsedData = typeof data === 'string' ? JSON.parse(data) : data
     const { idReporte, cliente, direccion, ciudad, encargado, marca, modelo, nSerie, tipo, EnFFAB, EnFFBC, EnFFCA, EnFNAN, EnFNBN, ENFNCN, CorrA, CorrB, CorrC, SalFFAB, SalFFBC, SalFFCA, SalFNAN, SalFNBN, SalFNCN, CorrSalidaA, CorrSalidaB, CorrSalidaC, FrecEntr, FrecSalid, PorCarga, TenBateria, CorrBateria, TempUPS, ModeloBateria, CantBaterias, AñoFabricacionBaterias, Observaciones, nombreRealizo, nombreRecibio, fechaRealizado, fechaRecibido } = parsedData;
 
@@ -599,6 +656,23 @@ const reportesController: controllerProps = {
         //Inicializamos el request para las consultas dentro de la transacción
         const request = new Request(transaction);
 
+        // Primero verificamos que el reporte pertenece al usuario autenticado
+        const queryVerifyOwner = `
+          SELECT COUNT(*) as count
+          FROM reportes
+          WHERE idReporte = @idReporte AND usuarioCreador = @usuario
+        `;
+
+        const verifyResult = await request
+          .input('idReporte', UniqueIdentifier, idReporte)
+          .input('usuario', NVarChar, usuario)
+          .query(queryVerifyOwner);
+
+        if (verifyResult.recordset[0].count === 0) {
+          await transaction.rollback();
+          return res.status(403).send({ type: "fatal", message: "No tienes permiso para actualizar este reporte" });
+        }
+
         //Query para actualizar el reporte
         const queryUpdateReporte =
           `UPDATE reportes 
@@ -611,15 +685,15 @@ const reportesController: controllerProps = {
         observaciones = @observaciones,
         nombreRealizo = @nombreRealizo,
         nombreRecibio = @nombreRecibio,
-        usuarioCreador = @usuarioCreador,
         fechaRealizo = @fechaRealizo,
         fechaRecibio = @fechaRecibio,
         fechaModificacion = GETDATE()
-        WHERE idReporte = @idReporte`;
+        WHERE idReporte = @idReporte AND usuarioCreador = @usuario`;
 
         //Enviamos el query y escapamos los datos para evitar inyecciones
         //Limpiamos las entradas para evitar espacios al inicio y final
-        await request
+        const updateRequest = new Request(transaction);
+        await updateRequest
           .input("idReporte", UniqueIdentifier, idReporte)
           .input("cliente", NVarChar, cliente.trim())
           .input("direccion", NVarChar, direccion.trim())
@@ -630,7 +704,7 @@ const reportesController: controllerProps = {
           .input("observaciones", NVarChar, Observaciones.trim())
           .input("nombreRealizo", NVarChar, nombreRealizo.trim())
           .input("nombreRecibio", NVarChar, nombreRecibio.trim())
-          .input("usuarioCreador", NVarChar, usuarioCreador.trim() || "UsuarioPrueba")
+          .input("usuario", NVarChar, usuario)
           .input("fechaRealizo", Date, fechaRealizado || null)
           .input("fechaRecibio", Date, fechaRecibido || null)
           .query(queryUpdateReporte);
@@ -774,10 +848,14 @@ const reportesController: controllerProps = {
   //Eliminar un reporte existente
   delete: async (req, res) => {
     const id = req.params.id;
+    const usuario = req.usuario; // Obtener del middleware de autenticación
 
     //Validamos que se haya enviado el id
     if (!id)
       return res.status(400).send({ type: "fatal", message: "Faltan datos por completar" });
+
+    if (!usuario)
+      return res.status(401).send({ type: "fatal", message: "Usuario no autenticado" });
 
     //Validamos que el id sea una cadena de texto
     if (typeof id !== "string")
@@ -794,53 +872,87 @@ const reportesController: controllerProps = {
 
         const request = new Request(transaction);
 
-        //Primero obtenemos los archivos asociados al reporte
-        const queryGetFiles = `
-          SELECT DISTINCT imagenRuta
-          FROM imagenes
-          WHERE idReporte = @idReporte AND imagenRuta IS NOT NULL
+        // Verificar que el reporte pertenece al usuario autenticado
+        const queryVerifyOwner = `
+          SELECT COUNT(*) as count
+          FROM reportes
+          WHERE idReporte = @idReporte AND usuarioCreador = @usuario
         `;
 
-        request.input("idReporte", UniqueIdentifier, id);
-        const filesResult = await request.query(queryGetFiles);
+        const verifyResult = await request
+          .input('idReporte', UniqueIdentifier, id)
+          .input('usuario', NVarChar, usuario)
+          .query(queryVerifyOwner);
+
+        if (verifyResult.recordset[0].count === 0) {
+          await transaction.rollback();
+          return res.status(403).send({ type: "fatal", message: "No tienes permiso para eliminar este reporte" });
+        }
+
+        //Primero obtenemos los archivos asociados al reporte
+        const queryGetFiles = `
+          SELECT DISTINCT urlArchivo
+          FROM imagenesReferencia
+          WHERE idReporte = @idReporte AND urlArchivo IS NOT NULL
+        `;
+
+        const verifyRequest = new Request(transaction);
+        verifyRequest.input("idReporte", UniqueIdentifier, id);
+        const filesResult = await verifyRequest.query(queryGetFiles);
 
         //Eliminamos los archivos de la carpeta uploads
         const uploadsPath = path.join(process.cwd(), "uploads");
 
         for (const file of filesResult.recordset) {
           try {
-            const filePath = path.join(uploadsPath, file.imagenRuta);
+            const filePath = path.join(uploadsPath, file.urlArchivo);
 
             //Verificamos que el archivo existe antes de eliminarlo
             if (fs.existsSync(filePath)) {
               fs.unlinkSync(filePath);
               console.log(`Archivo eliminado: ${filePath}`);
             }
-          } catch (fileError: any) {
-            console.warn(`No se pudo eliminar el archivo: ${file.imagenRuta}`, fileError.message);
+          } catch (error) {
+            console.warn(`No se pudo eliminar el archivo: ${file.urlArchivo}`, error);
             //Continuamos con la siguiente iteración si falla un archivo
           }
         }
 
         //Ahora eliminamos de las tablas de base de datos
+        const deleteImagesRequest = new Request(transaction);
         const queryDeleteImages = `
-          DELETE FROM imagenes
+          DELETE FROM imagenesReferencia
           WHERE idReporte = @idReporte
         `;
+        await deleteImagesRequest.input("idReporte", UniqueIdentifier, id).query(queryDeleteImages);
 
+        const deleteEquiposRequest = new Request(transaction);
         const queryDeleteEquipos = `
           DELETE FROM equipos
           WHERE idReporte = @idReporte
         `;
+        await deleteEquiposRequest.input("idReporte", UniqueIdentifier, id).query(queryDeleteEquipos);
 
+        const deleteMedicionesRequest = new Request(transaction);
+        const queryDeleteMediciones = `
+          DELETE FROM mediciones_electricas
+          WHERE idReporte = @idReporte
+        `;
+        await deleteMedicionesRequest.input("idReporte", UniqueIdentifier, id).query(queryDeleteMediciones);
+
+        const deleteDatosRequest = new Request(transaction);
+        const queryDeleteDatos = `
+          DELETE FROM datosAdicionales
+          WHERE idReporte = @idReporte
+        `;
+        await deleteDatosRequest.input("idReporte", UniqueIdentifier, id).query(queryDeleteDatos);
+
+        const deleteReporteRequest = new Request(transaction);
         const queryDeleteReporte = `
           DELETE FROM reportes
           WHERE idReporte = @idReporte
         `;
-
-        await request.query(queryDeleteImages);
-        await request.query(queryDeleteEquipos);
-        await request.query(queryDeleteReporte);
+        await deleteReporteRequest.input("idReporte", UniqueIdentifier, id).query(queryDeleteReporte);
 
         //Confirmamos la transacción
         await transaction.commit();
