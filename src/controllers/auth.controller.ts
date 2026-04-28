@@ -2,7 +2,6 @@ import { createRefreshToken, createAuthToken } from "../functions/createToken";
 import controllerProps from "./interfaces";
 import { Client } from "ldapts";
 import jwt from "jsonwebtoken";
-import { it } from "node:test";
 
 // PREPARADO PARA FUTURO: Importar funciones LDAP helper
 // import {
